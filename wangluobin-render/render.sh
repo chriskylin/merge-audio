@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-mkdir -p wangluobin-render/{src,frames,segments,out}
+mkdir -p wangluobin-render/{src,segments,out}
 cd wangluobin-render
 
 fetch_img() {
@@ -9,15 +9,12 @@ fetch_img() {
   if curl -fL --retry 3 --connect-timeout 15 --max-time 90 \
     -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36' \
     -e "$referer" "$url" -o "src/$name"; then
-      if ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "src/$name" >/dev/null 2>&1; then
-        return 0
-      fi
+      if ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "src/$name" >/dev/null 2>&1; then return 0; fi
   fi
-  rm -f "src/$name"
-  return 1
+  rm -f "src/$name"; return 1
 }
 
-# 只使用可核验的王洛宾真人/史料照片。下载失败时退回同人物、同阶段照片，不生成AI历史场景。
+# 只用可核验公开真人/史料照片；具体节点无图则复用同人物/同阶段真人照，不生成AI历史场景。
 fetch_img portrait.jpg 'https://i2.chinanews.com/simg/hnhd/2023/11/29/45/3141091278417735329.jpg' 'https://www.chinanews.com.cn/' || true
 fetch_img manuscript.jpg 'https://i2.chinanews.com/simg/hnhd/2023/11/29/7/16032249885843546467.jpg' 'https://www.chinanews.com.cn/' || true
 fetch_img early.jpg 'https://x0.ifengimg.com/ucms/2021_50/E3E8935B15D32A42CAA4E66365A054827A95E931_size52_w746_h703.jpg' 'https://gs.ifeng.com/' || true
@@ -34,13 +31,8 @@ fetch_img taiwan_press.jpg 'https://i2.chinanews.com/simg/hnhd/2023/11/29/68/831
 fetch_img taiwan_group.jpg 'https://g.udn.com.tw/upfiles/B_ME/melyang2008/PSN_PHOTO/416/f_7741416_1.jpg' 'https://udn.com/' || true
 fetch_img liangan.jpg 'https://i2.chinanews.com/simg/hnhd/2023/11/29/95/15747710494210093215.jpg' 'https://www.chinanews.com.cn/' || true
 
-# 保底：必须至少拿到一张真实王洛宾照片。
-if [[ ! -f src/portrait.jpg ]]; then
-  fetch_img portrait.jpg 'https://www.krzzjn.com/uploadfile/2020/0703/20200703032538391.jpg' 'https://www.krzzjn.com/' || true
-fi
-if [[ ! -f src/portrait.jpg ]]; then
-  fetch_img portrait.jpg 'https://bkimg.cdn.bcebos.com/smart/1b4c510fd9f9d72a6059a8bd7d733f34349b033b0d43-bkimg-process%2Cv_1%2Crw_1%2Crh_1%2Cpad_1%2Ccolor_ffffff?x-bce-process=image%2Fformat%2Cf_auto' 'https://baike.baidu.com/' || true
-fi
+if [[ ! -f src/portrait.jpg ]]; then fetch_img portrait.jpg 'https://www.krzzjn.com/uploadfile/2020/0703/20200703032538391.jpg' 'https://www.krzzjn.com/' || true; fi
+if [[ ! -f src/portrait.jpg ]]; then fetch_img portrait.jpg 'https://bkimg.cdn.bcebos.com/pic/500fd9f9d72a6059252defb3d468239b033b5bb50c5f' 'https://baike.baidu.com/' || true; fi
 [[ -f src/portrait.jpg ]] || { echo 'No verified Wang Luobin image could be downloaded'; exit 2; }
 
 fallback() { [[ -f "src/$1" ]] || cp "src/$2" "src/$1"; }
@@ -59,46 +51,45 @@ fallback taiwan_press.jpg portrait.jpg
 fallback taiwan_group.jpg taiwan_press.jpg
 fallback liangan.jpg manuscript.jpg
 
-# 生成每个镜头的9:16画面：虚化原图作背景，完整原图居中，避免裁掉人物。
 make_segment() {
   local idx="$1" src="$2" dur="$3" zoom="$4"
-  local frames=$(( $(printf '%.0f' "$(awk -v d="$dur" 'BEGIN{print d*30}')") ))
-  ffmpeg -hide_banner -loglevel error -y -loop 1 -i "src/$src" -t "$dur" \
-    -filter_complex "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:2[bg];[0:v]scale=1000:1720:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,zoompan=z='min(zoom+${zoom},1.055)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=1080x1920:fps=30,format=yuv420p[v]" \
-    -map '[v]' -an -c:v libx264 -preset ultrafast -crf 25 -r 30 -pix_fmt yuv420p "segments/${idx}.mp4"
+  echo "Rendering $idx $src $dur"
+  ffmpeg -hide_banner -loglevel error -y -loop 1 -framerate 30 -i "src/$src" -t "$dur" \
+    -filter_complex "[0:v]split=2[bg][fg];[bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:2,eq=brightness=-0.18[bg2];[fg]scale=1000:1720:force_original_aspect_ratio=decrease[fg2];[bg2][fg2]overlay=(W-w)/2:(H-h)/2,zoompan=z='min(1+${zoom}*on,1.055)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30,format=yuv420p[v]" \
+    -map '[v]' -an -c:v libx264 -preset ultrafast -crf 26 -r 30 -pix_fmt yuv420p "segments/${idx}.mp4"
 }
 
-# 28个镜头，时长与最终配音语义时间线一致（总长约671.8秒，尾部由本地配音裁齐）。
+# 每段持续到下一语义切换点，合计严格 673.0 秒。
 make_segment 01 portrait.jpg 14.3 0.00010
-make_segment 02 manuscript.jpg 14.8 0.00008
-make_segment 03 early.jpg 28.2 0.00008
+make_segment 02 manuscript.jpg 15.0 0.00008
+make_segment 03 early.jpg 28.5 0.00008
 make_segment 04 lanzhou.jpg 14.2 0.00010
-make_segment 05 xiaojun.jpg 11.5 0.00012
-make_segment 06 xiaojun.jpg 20.4 0.00006
-make_segment 07 early.jpg 22.3 0.00008
-make_segment 08 lanzhou.jpg 21.7 0.00007
-make_segment 09 manuscript.jpg 29.0 0.00007
-make_segment 10 early.jpg 32.6 0.00006
-make_segment 11 manuscript.jpg 42.1 0.00005
-make_segment 12 prison.png 32.8 0.00007
-make_segment 13 prison.png 45.3 0.00005
-make_segment 14 piano.png 28.7 0.00007
-make_segment 15 uniform.jpg 18.2 0.00009
-make_segment 16 piano.png 32.5 0.00006
-make_segment 17 piano.png 30.9 0.00007
-make_segment 18 bookstore.jpg 23.7 0.00008
-make_segment 19 sanmao1.jpg 25.2 0.00008
-make_segment 20 sanmao2.jpg 29.0 0.00007
-make_segment 21 sanmao_piano.jpg 20.3 0.00009
+make_segment 05 xiaojun.jpg 11.8 0.00012
+make_segment 06 xiaojun.jpg 20.6 0.00006
+make_segment 07 early.jpg 22.6 0.00008
+make_segment 08 lanzhou.jpg 21.9 0.00007
+make_segment 09 manuscript.jpg 29.2 0.00007
+make_segment 10 early.jpg 33.4 0.00006
+make_segment 11 manuscript.jpg 42.6 0.00005
+make_segment 12 prison.png 33.0 0.00007
+make_segment 13 prison.png 45.7 0.00005
+make_segment 14 piano.png 29.1 0.00007
+make_segment 15 uniform.jpg 18.5 0.00009
+make_segment 16 piano.png 32.8 0.00006
+make_segment 17 piano.png 31.1 0.00007
+make_segment 18 bookstore.jpg 24.1 0.00008
+make_segment 19 sanmao1.jpg 25.3 0.00008
+make_segment 20 sanmao2.jpg 29.3 0.00007
+make_segment 21 sanmao_piano.jpg 20.8 0.00009
 make_segment 22 taiwan_press.jpg 14.2 0.00010
-make_segment 23 taiwan_group.jpg 12.7 0.00011
-make_segment 24 liangan.jpg 15.5 0.00010
-make_segment 25 portrait.jpg 19.1 0.00009
-make_segment 26 piano.png 23.8 0.00008
-make_segment 27 manuscript.jpg 17.9 0.00009
-make_segment 28 portrait.jpg 22.6 0.00008
+make_segment 23 taiwan_group.jpg 13.6 0.00011
+make_segment 24 liangan.jpg 15.7 0.00010
+make_segment 25 portrait.jpg 19.4 0.00009
+make_segment 26 piano.png 24.0 0.00008
+make_segment 27 manuscript.jpg 18.5 0.00009
+make_segment 28 portrait.jpg 23.8 0.00008
 
 : > concat.txt
 for f in segments/*.mp4; do echo "file '$PWD/$f'" >> concat.txt; done
-ffmpeg -hide_banner -loglevel error -y -f concat -safe 0 -i concat.txt -c copy out/wangluobin_video_only.mp4
+ffmpeg -hide_banner -loglevel error -y -f concat -safe 0 -i concat.txt -c copy -movflags +faststart out/wangluobin_video_only.mp4
 ffprobe -v error -show_entries format=duration,size -of default=nw=1 out/wangluobin_video_only.mp4
