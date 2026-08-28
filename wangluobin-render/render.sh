@@ -1,20 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
-mkdir -p wangluobin-render/{src,segments,out}
+mkdir -p wangluobin-render/{src,frames,out}
 cd wangluobin-render
 
 fetch_img() {
   local name="$1" url="$2" referer="$3"
   echo "Downloading $name"
-  if curl -fL --retry 3 --connect-timeout 15 --max-time 90 \
-    -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36' \
-    -e "$referer" "$url" -o "src/$name"; then
-      if ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "src/$name" >/dev/null 2>&1; then return 0; fi
+  if curl -fL --retry 2 --connect-timeout 12 --max-time 60 -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36' -e "$referer" "$url" -o "src/$name"; then
+    if ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "src/$name" >/dev/null 2>&1; then return 0; fi
   fi
   rm -f "src/$name"; return 1
 }
 
-# 只用可核验公开真人/史料照片；具体节点无图则复用同人物/同阶段真人照，不生成AI历史场景。
 fetch_img portrait.jpg 'https://i2.chinanews.com/simg/hnhd/2023/11/29/45/3141091278417735329.jpg' 'https://www.chinanews.com.cn/' || true
 fetch_img manuscript.jpg 'https://i2.chinanews.com/simg/hnhd/2023/11/29/7/16032249885843546467.jpg' 'https://www.chinanews.com.cn/' || true
 fetch_img early.jpg 'https://x0.ifengimg.com/ucms/2021_50/E3E8935B15D32A42CAA4E66365A054827A95E931_size52_w746_h703.jpg' 'https://gs.ifeng.com/' || true
@@ -36,60 +33,28 @@ if [[ ! -f src/portrait.jpg ]]; then fetch_img portrait.jpg 'https://bkimg.cdn.b
 [[ -f src/portrait.jpg ]] || { echo 'No verified Wang Luobin image could be downloaded'; exit 2; }
 
 fallback() { [[ -f "src/$1" ]] || cp "src/$2" "src/$1"; }
-fallback manuscript.jpg portrait.jpg
-fallback early.jpg portrait.jpg
-fallback lanzhou.jpg early.jpg
-fallback xiaojun.jpg lanzhou.jpg
-fallback prison.png portrait.jpg
-fallback piano.png portrait.jpg
-fallback uniform.jpg portrait.jpg
-fallback bookstore.jpg portrait.jpg
-fallback sanmao1.jpg portrait.jpg
-fallback sanmao2.jpg sanmao1.jpg
-fallback sanmao_piano.jpg sanmao1.jpg
-fallback taiwan_press.jpg portrait.jpg
-fallback taiwan_group.jpg taiwan_press.jpg
-fallback liangan.jpg manuscript.jpg
+fallback manuscript.jpg portrait.jpg; fallback early.jpg portrait.jpg; fallback lanzhou.jpg early.jpg; fallback xiaojun.jpg lanzhou.jpg
+fallback prison.png portrait.jpg; fallback piano.png portrait.jpg; fallback uniform.jpg portrait.jpg; fallback bookstore.jpg portrait.jpg
+fallback sanmao1.jpg portrait.jpg; fallback sanmao2.jpg sanmao1.jpg; fallback sanmao_piano.jpg sanmao1.jpg
+fallback taiwan_press.jpg portrait.jpg; fallback taiwan_group.jpg taiwan_press.jpg; fallback liangan.jpg manuscript.jpg
 
-make_segment() {
-  local idx="$1" src="$2" dur="$3" zoom="$4"
-  echo "Rendering $idx $src $dur"
-  ffmpeg -hide_banner -loglevel error -y -loop 1 -framerate 30 -i "src/$src" -t "$dur" \
-    -filter_complex "[0:v]split=2[bg][fg];[bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:2,eq=brightness=-0.18[bg2];[fg]scale=1000:1720:force_original_aspect_ratio=decrease[fg2];[bg2][fg2]overlay=(W-w)/2:(H-h)/2,zoompan=z='min(1+${zoom}*on,1.055)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30,format=yuv420p[v]" \
-    -map '[v]' -an -c:v libx264 -preset ultrafast -crf 26 -r 30 -pix_fmt yuv420p "segments/${idx}.mp4"
+make_frame() {
+  local idx="$1" src="$2"
+  ffmpeg -hide_banner -loglevel error -y -i "src/$src" -filter_complex "[0:v]split=2[bg][fg];[bg]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,boxblur=18:2,eq=brightness=-0.18[bg2];[fg]scale=680:1160:force_original_aspect_ratio=decrease[fg2];[bg2][fg2]overlay=(W-w)/2:(H-h)/2,format=yuv420p[v]" -map '[v]' -frames:v 1 "frames/${idx}.jpg"
 }
 
-# 每段持续到下一语义切换点，合计严格 673.0 秒。
-make_segment 01 portrait.jpg 14.3 0.00010
-make_segment 02 manuscript.jpg 15.0 0.00008
-make_segment 03 early.jpg 28.5 0.00008
-make_segment 04 lanzhou.jpg 14.2 0.00010
-make_segment 05 xiaojun.jpg 11.8 0.00012
-make_segment 06 xiaojun.jpg 20.6 0.00006
-make_segment 07 early.jpg 22.6 0.00008
-make_segment 08 lanzhou.jpg 21.9 0.00007
-make_segment 09 manuscript.jpg 29.2 0.00007
-make_segment 10 early.jpg 33.4 0.00006
-make_segment 11 manuscript.jpg 42.6 0.00005
-make_segment 12 prison.png 33.0 0.00007
-make_segment 13 prison.png 45.7 0.00005
-make_segment 14 piano.png 29.1 0.00007
-make_segment 15 uniform.jpg 18.5 0.00009
-make_segment 16 piano.png 32.8 0.00006
-make_segment 17 piano.png 31.1 0.00007
-make_segment 18 bookstore.jpg 24.1 0.00008
-make_segment 19 sanmao1.jpg 25.3 0.00008
-make_segment 20 sanmao2.jpg 29.3 0.00007
-make_segment 21 sanmao_piano.jpg 20.8 0.00009
-make_segment 22 taiwan_press.jpg 14.2 0.00010
-make_segment 23 taiwan_group.jpg 13.6 0.00011
-make_segment 24 liangan.jpg 15.7 0.00010
-make_segment 25 portrait.jpg 19.4 0.00009
-make_segment 26 piano.png 24.0 0.00008
-make_segment 27 manuscript.jpg 18.5 0.00009
-make_segment 28 portrait.jpg 23.8 0.00008
+make_frame 01 portrait.jpg; make_frame 02 manuscript.jpg; make_frame 03 early.jpg; make_frame 04 lanzhou.jpg
+make_frame 05 xiaojun.jpg; make_frame 06 xiaojun.jpg; make_frame 07 early.jpg; make_frame 08 lanzhou.jpg
+make_frame 09 manuscript.jpg; make_frame 10 early.jpg; make_frame 11 manuscript.jpg; make_frame 12 prison.png
+make_frame 13 prison.png; make_frame 14 piano.png; make_frame 15 uniform.jpg; make_frame 16 piano.png
+make_frame 17 piano.png; make_frame 18 bookstore.jpg; make_frame 19 sanmao1.jpg; make_frame 20 sanmao2.jpg
+make_frame 21 sanmao_piano.jpg; make_frame 22 taiwan_press.jpg; make_frame 23 taiwan_group.jpg; make_frame 24 liangan.jpg
+make_frame 25 portrait.jpg; make_frame 26 piano.png; make_frame 27 manuscript.jpg; make_frame 28 portrait.jpg
 
-: > concat.txt
-for f in segments/*.mp4; do echo "file '$PWD/$f'" >> concat.txt; done
-ffmpeg -hide_banner -loglevel error -y -f concat -safe 0 -i concat.txt -c copy -movflags +faststart out/wangluobin_video_only.mp4
+durs=(14.3 15.0 28.5 14.2 11.8 20.6 22.6 21.9 29.2 33.4 42.6 33.0 45.7 29.1 18.5 32.8 31.1 24.1 25.3 29.3 20.8 14.2 13.6 15.7 19.4 24.0 18.5 23.8)
+: > slides.txt
+for i in $(seq -w 1 28); do n=$((10#$i-1)); echo "file '$PWD/frames/$i.jpg'" >> slides.txt; echo "duration ${durs[$n]}" >> slides.txt; done
+echo "file '$PWD/frames/28.jpg'" >> slides.txt
+
+ffmpeg -hide_banner -loglevel error -y -f concat -safe 0 -i slides.txt -vf 'fps=30,format=yuv420p' -c:v libx264 -preset ultrafast -crf 23 -movflags +faststart out/wangluobin_video_only.mp4
 ffprobe -v error -show_entries format=duration,size -of default=nw=1 out/wangluobin_video_only.mp4
