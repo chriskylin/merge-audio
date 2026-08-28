@@ -5,20 +5,10 @@ mkdir -p assets scenes out
 UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/152 Safari/537.36'
 
 download_img() {
-  local name="$1" url="$2" referer="$3" alt="${4:-}"
+  local name="$1" url="$2" referer="$3"
   echo "Downloading $name"
-  if ! curl -L --fail --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 90 \
-      -A "$UA" -e "$referer" -o "assets/$name" "$url"; then
-    if [[ -n "$alt" ]]; then
-      echo "Primary failed; trying fallback for $name"
-      curl -L --fail --retry 3 --connect-timeout 20 --max-time 90 \
-        -A "$UA" -e "$referer" -o "assets/$name" "$alt" || true
-    fi
-  fi
-  if [[ ! -s "assets/$name" ]]; then
-    echo "WARN: failed to obtain $name"
-    rm -f "assets/$name"
-  fi
+  curl -L --fail --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 90 \
+    -A "$UA" -e "$referer" -o "assets/$name" "$url" || rm -f "assets/$name"
 }
 
 download_img book.jpg 'https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/dr000/auc0412/users/fd51423cbaca193f6dbc12ac42269eeff847ec69/i-img1200x900-1703894173tvzbrk181627.jpg' 'https://auctions.yahoo.co.jp/'
@@ -37,11 +27,9 @@ download_img bts.jpg 'https://res.cloudinary.com/fridaydigital/image/private/t_a
 download_img museum.jpg 'https://sapporotravel.s3-ap-northeast-1.amazonaws.com/st/ph/img/c066-003.jpg' 'https://www.sapporo.travel/'
 
 FALLBACK=''
-for f in young.jpg portrait.jpg writing.jpg late.jpg late_china.jpg late_sohu.jpg museum.jpg; do
-  if [[ -s "assets/$f" ]]; then FALLBACK="$f"; break; fi
-done
-if [[ -z "$FALLBACK" ]]; then echo 'No usable images downloaded.' >&2; exit 2; fi
-pick() { local f="$1"; if [[ -s "assets/$f" ]]; then echo "$f"; else echo "$FALLBACK"; fi; }
+for f in young.jpg portrait.jpg writing.jpg late.jpg late_china.jpg late_sohu.jpg museum.jpg; do [[ -s "assets/$f" ]] && { FALLBACK="$f"; break; }; done
+[[ -n "$FALLBACK" ]] || { echo 'No images' >&2; exit 2; }
+pick(){ [[ -s "assets/$1" ]] && echo "$1" || echo "$FALLBACK"; }
 
 cat > scenes/map.tsv <<'EOF'
 14.43|book.jpg
@@ -77,21 +65,14 @@ cat > scenes/map.tsv <<'EOF'
 22.14|museum.jpg
 EOF
 
-render_scene() {
-  local idx="$1" dur="$2" requested="$3"
-  local asset; asset="$(pick "$requested")"
-  printf -v num '%02d' "$idx"
-  echo "Render scene $num ${dur}s from $asset"
-  ffmpeg -nostdin -hide_banner -loglevel error -y \
-    -loop 1 -framerate 25 -i "assets/$asset" -t "$dur" \
-    -filter_complex "[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,boxblur=18:2[bg];[0:v]scale=680:1180:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,format=yuv420p" \
-    -r 25 -an -c:v libx264 -preset ultrafast -crf 23 -movflags +faststart \
-    "scenes/scene_${num}.mp4"
-}
-
 idx=1
-while IFS='|' read -r dur asset; do
-  render_scene "$idx" "$dur" "$asset"
+while IFS='|' read -r dur requested; do
+  asset="$(pick "$requested")"; printf -v num '%02d' "$idx"
+  echo "Render $num ${dur}s $asset"
+  # 2 fps is enough for a static-photo intermediate; final 25 fps is produced locally with subtitles/audio.
+  ffmpeg -nostdin -hide_banner -loglevel error -y -loop 1 -framerate 2 -i "assets/$asset" -t "$dur" \
+    -filter_complex "[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,boxblur=14:2[bg];[0:v]scale=680:1180:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,format=yuv420p" \
+    -r 2 -an -c:v libx264 -preset ultrafast -crf 20 "scenes/scene_${num}.mp4"
   idx=$((idx+1))
 done < scenes/map.tsv
 
