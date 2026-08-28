@@ -1,0 +1,27 @@
+name: Wang Luobin Render
+on:
+  push:
+    branches:
+      - chatgpt/wangluobin-render-20260828
+    paths:
+      - 'wangluobin-render/**'
+      - '.github/workflows/wangluobin-render.yml'
+  workflow_dispatch:
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Render historical-photo video
+        run: bash wangluobin-render/render.sh
+      - name: Upload video-only render
+        uses: actions/upload-artifact@v4
+        with:
+          name: wangluobin-video-only
+          path: wangluobin-render/out/wangluobin_video_only.mp4
+          compression-level: 0
+          retention-days: 1
