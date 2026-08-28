@@ -1,0 +1,30 @@
+name: Watanabe video render
+
+on:
+  push:
+    branches:
+      - watanabe-video-render-20260828
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      - name: Render silent visual track
+        run: |
+          chmod +x watanabe_render/render.sh
+          ./watanabe_render/render.sh
+      - name: Upload rendered video
+        uses: actions/upload-artifact@v4
+        with:
+          name: watanabe-silent-video
+          path: out/watanabe_silent.mp4
+          if-no-files-found: error
+          compression-level: 0
