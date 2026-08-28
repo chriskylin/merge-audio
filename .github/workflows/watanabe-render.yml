@@ -1,4 +1,4 @@
-name: Watanabe video render
+name: Watanabe asset bridge
 
 on:
   push:
@@ -6,25 +6,21 @@ on:
       - watanabe-video-render-20260828
 
 jobs:
-  render:
+  fetch-assets:
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Install FFmpeg
+      - name: Fetch verified real-photo assets
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-      - name: Render silent visual track
-        run: |
-          chmod +x watanabe_render/render.sh
-          ./watanabe_render/render.sh
-      - name: Upload rendered video
+          chmod +x watanabe_render/fetch_assets.sh
+          ./watanabe_render/fetch_assets.sh
+      - name: Upload verified assets
         uses: actions/upload-artifact@v4
         with:
-          name: watanabe-silent-video
-          path: out/watanabe_silent.mp4
+          name: watanabe-real-assets
+          path: assets/
           if-no-files-found: error
           compression-level: 0
