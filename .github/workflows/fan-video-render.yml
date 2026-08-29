@@ -20,7 +20,7 @@ jobs:
           fi
           ffmpeg -version | head -1
       - name: Render real-photo visual track
-        run: python3 fan_video/render_visual.py
+        run: python3 fan_video/fast_render.py
       - name: Upload visual track
         uses: actions/upload-artifact@v4
         with:
